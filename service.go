@@ -1,27 +1,33 @@
 package protogengosvc
 
 import (
-	"strings"
+	"errors"
 
+	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/protobuf/compiler/protogen"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // Service contains all the info the service needs to be generated
 type Service struct {
-	Package  string
-	Name     string
-	RootPath string
-	Methods  []*Method
+	Package string
+	Name    string
+	Methods []*Method
 }
 
 // NewService creates a new service from a protobuf definition
-func NewService(pkg string, svc *protogen.Service) *Service {
-	return &Service{
-		Package:  pkg,
-		Name:     string(svc.Desc.Name()),
-		RootPath: "/root", // TODO add support for this
-		Methods:  NewMethods(svc.Methods),
+func NewService(pkg string, svc *protogen.Service) (*Service, error) {
+	methods, err := NewMethods(svc.Methods)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Service{
+		Package: pkg,
+		Name:    string(svc.Desc.Name()),
+		Methods: methods,
+	}, nil
 }
 
 // Method is a single service method
@@ -31,48 +37,75 @@ type Method struct {
 	HTTPMethod   string
 	RequestType  string
 	ResponseType string
-	Parameters   []*Parameter
 }
 
 // NewMethod creates a method from a protobuf definition
-func NewMethod(method *protogen.Method) *Method {
-	name := string(method.Desc.Name())
+func NewMethod(method *protogen.Method) (*Method, error) {
+	options, ok := method.Desc.Options().(*descriptorpb.MethodOptions)
+	if !ok {
+		return nil, errors.New("invalid option type")
+	}
+
+	rule, ok := proto.GetExtension(options, annotations.E_Http).(*annotations.HttpRule)
+	if !ok {
+		return nil, errors.New("invalid http rule type")
+	}
+
+	var m, p string
+	switch rule.GetPattern().(type) {
+	case *annotations.HttpRule_Get:
+		m = "GET"
+		p = rule.GetGet()
+	case *annotations.HttpRule_Put:
+		m = "PUT"
+		p = rule.GetPut()
+	case *annotations.HttpRule_Post:
+		m = "POST"
+		p = rule.GetPost()
+	case *annotations.HttpRule_Delete:
+		m = "DELETE"
+		p = rule.GetDelete()
+	case *annotations.HttpRule_Patch:
+		m = "PATCH"
+		p = rule.GetPatch()
+	default:
+		return nil, errors.New("invalid pattern type")
+	}
 
 	return &Method{
-		Name:         name,
-		Path:         "/todo", // TODO add support for this
-		HTTPMethod:   httpMethodFromName(name),
+		Name:         string(method.Desc.Name()),
+		HTTPMethod:   m,
+		Path:         p,
 		RequestType:  method.Input.GoIdent.GoName,
 		ResponseType: method.Output.GoIdent.GoName,
-	}
+	}, nil
 }
 
 // NewMethods creates multiple methods from protobuf definitions
-func NewMethods(methods []*protogen.Method) []*Method {
+func NewMethods(methods []*protogen.Method) ([]*Method, error) {
 	var results []*Method
 	for _, m := range methods {
-		results = append(results, NewMethod(m))
+		n, err := NewMethod(m)
+		if err != nil {
+			return nil, err
+		}
+
+		results = append(results, n)
 	}
-	return results
+	return results, nil
+}
+
+func (m *Method) ReadBody() bool {
+	switch m.HTTPMethod {
+	case "GET", "DELETE":
+		return false
+	default:
+		return true
+	}
 }
 
 // Parameter is a paramenter on a Method
 type Parameter struct {
 	Name        string
 	Description string
-}
-
-func httpMethodFromName(name string) string {
-	switch {
-	case strings.HasPrefix(name, "GET"):
-		return "GET"
-	case strings.HasPrefix(name, "POST"):
-		return "POST"
-	case strings.HasPrefix(name, "PUT"):
-		return "PUT"
-	case strings.HasPrefix(name, "DELETE"):
-		return "DELETE"
-	}
-
-	return "POST"
 }

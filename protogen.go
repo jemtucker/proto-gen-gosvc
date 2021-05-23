@@ -32,7 +32,11 @@ func (p *Protogen) genService(svc *protogen.Service, file *protogen.File) error 
 		{name: "handler", content: templateHandler},
 	}
 
-	service := NewService(string(file.GoPackageName), svc)
+	service, err := NewService(string(file.GoPackageName), svc)
+	if err != nil {
+		return err
+	}
+
 	for _, t := range templates {
 		if err := p.genTemplate(t.name, t.content, service, file); err != nil {
 			return fmt.Errorf("error writing template %q: %w", t.name, err)
